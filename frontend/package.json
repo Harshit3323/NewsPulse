@@ -1,0 +1,19 @@
+{
+  "name": "news-pulse-frontend",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "dev": "echo Frontend tooling is not configured yet",
+    "build": "echo Frontend tooling is not configured yet"
+  },
+  "packageManager": "pnpm@11.21.0",
+  "dependencies": {
+    "react": "^19.3.0",
+    "react-dom": "^19.3.0",
+    "recharts": "^3.10.1"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-react": "^6.1.1",
+    "vite": "^8.3.1"
+  }
+}

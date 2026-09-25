@@ -1,10 +1,11 @@
 import os
+from pathlib import Path
 from pymongo import MongoClient
 from pymongo.collection import Collection
 from pymongo.database import Database
 from dotenv import load_dotenv
 
-load_dotenv()
+load_dotenv(dotenv_path=Path(__file__).with_name(".env"))
 
 MONGODB_URI = os.getenv("MONGODB_URI", "mongodb://localhost:27017")
 DB_NAME = os.getenv("DB_NAME", "news_pulse")
@@ -46,26 +47,33 @@ def insert_articles(db: Database, articles: list[dict]) -> int:
     return new_count
 
 
-def insert_cluster(
-    db: Database,
+def get_articles(db: Database) -> list[dict]:
+    return list(db["articles"].find({}, {"_id": 0}))
+
+
+def replace_clusters(db: Database, clusters: list[dict]) -> None:
+    collection = db["clusters"]
+    collection.delete_many({})
+
+    if clusters:
+        collection.insert_many(clusters)
+
+
+def build_cluster(
     label: str,
     article_ids: list[str],
     start_time: str,
     end_time: str,
-) -> int:
-    clusters = db["clusters"]
-    last_cluster = clusters.find_one(sort=[("cluster_id", -1)])
-    cluster_id = (last_cluster["cluster_id"] + 1) if last_cluster else 1
-
-    clusters.insert_one({
+    cluster_id: int,
+) -> dict:
+    return {
         "cluster_id": cluster_id,
         "label": label,
         "article_ids": article_ids,
         "start_time": start_time,
         "end_time": end_time,
         "article_count": len(article_ids),
-    })
-    return cluster_id
+    }
 
 
 def get_article_count(db: Database) -> int:
