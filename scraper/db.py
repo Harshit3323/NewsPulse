@@ -1,95 +1,76 @@
-import sqlite3
-import json
-from pathlib import Path
+import os
+from pymongo import MongoClient
+from pymongo.collection import Collection
+from pymongo.database import Database
+from dotenv import load_dotenv
 
-DB_PATH = Path(__file__).parent / "news_pulse.db"
+load_dotenv()
 
-
-def get_connection(db_path: str | Path | None = None) -> sqlite3.Connection:
-    path = db_path or DB_PATH
-    conn = sqlite3.connect(str(path))
-    conn.execute("PRAGMA journal_mode=WAL")
-    conn.execute("PRAGMA foreign_keys=ON")
-    conn.row_factory = sqlite3.Row
-    return conn
+MONGODB_URI = os.getenv("MONGODB_URI", "mongodb://localhost:27017")
+DB_NAME = os.getenv("DB_NAME", "news_pulse")
 
 
-def init_db(conn: sqlite3.Connection) -> None:
-    conn.executescript("""
-        CREATE TABLE IF NOT EXISTS articles (
-            id TEXT PRIMARY KEY,
-            title TEXT NOT NULL,
-            summary TEXT,
-            link TEXT NOT NULL,
-            published TEXT,
-            source TEXT,
-            full_text TEXT
-        );
-
-        CREATE TABLE IF NOT EXISTS clusters (
-            cluster_id INTEGER PRIMARY KEY AUTOINCREMENT,
-            label TEXT NOT NULL,
-            article_ids TEXT NOT NULL,
-            start_time TEXT,
-            end_time TEXT,
-            article_count INTEGER NOT NULL DEFAULT 0
-        );
-    """)
-    conn.commit()
+def get_db() -> Database:
+    client = MongoClient(MONGODB_URI)
+    return client[DB_NAME]
 
 
-def article_exists(conn: sqlite3.Connection, article_id: str) -> bool:
-    row = conn.execute("SELECT 1 FROM articles WHERE id = ?", (article_id,)).fetchone()
-    return row is not None
+def init_db(db: Database) -> None:
+    articles: Collection = db["articles"]
+    clusters: Collection = db["clusters"]
+
+    articles.create_index("id", unique=True)
+    articles.create_index("published")
+    articles.create_index("source")
+
+    clusters.create_index("cluster_id", unique=True)
+    clusters.create_index("article_ids")
 
 
-def insert_article(conn: sqlite3.Connection, article: dict) -> bool:
-    if article_exists(conn, article["id"]):
+def article_exists(db: Database, article_id: str) -> bool:
+    return db["articles"].find_one({"id": article_id}) is not None
+
+
+def insert_article(db: Database, article: dict) -> bool:
+    if article_exists(db, article["id"]):
         return False
-    conn.execute(
-        "INSERT INTO articles (id, title, summary, link, published, source, full_text) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?)",
-        (
-            article["id"],
-            article["title"],
-            article.get("summary", ""),
-            article["link"],
-            article.get("published", ""),
-            article.get("source", ""),
-            article.get("full_text", ""),
-        ),
-    )
-    conn.commit()
+    db["articles"].insert_one(article)
     return True
 
 
-def insert_articles(conn: sqlite3.Connection, articles: list[dict]) -> int:
+def insert_articles(db: Database, articles: list[dict]) -> int:
     new_count = 0
     for article in articles:
-        if insert_article(conn, article):
+        if insert_article(db, article):
             new_count += 1
     return new_count
 
 
 def insert_cluster(
-    conn: sqlite3.Connection,
+    db: Database,
     label: str,
     article_ids: list[str],
     start_time: str,
     end_time: str,
 ) -> int:
-    cursor = conn.execute(
-        "INSERT INTO clusters (label, article_ids, start_time, end_time, article_count) "
-        "VALUES (?, ?, ?, ?, ?)",
-        (label, json.dumps(article_ids), start_time, end_time, len(article_ids)),
-    )
-    conn.commit()
-    return cursor.lastrowid
+    clusters = db["clusters"]
+    last_cluster = clusters.find_one(sort=[("cluster_id", -1)])
+    cluster_id = (last_cluster["cluster_id"] + 1) if last_cluster else 1
+
+    clusters.insert_one({
+        "cluster_id": cluster_id,
+        "label": label,
+        "article_ids": article_ids,
+        "start_time": start_time,
+        "end_time": end_time,
+        "article_count": len(article_ids),
+    })
+    return cluster_id
 
 
-def get_article_count(conn: sqlite3.Connection) -> int:
-    return conn.execute("SELECT COUNT(*) FROM articles").fetchone()[0]
+def get_article_count(db: Database) -> int:
+    return db["articles"].count_documents({})
 
 
-def get_cluster_count(conn: sqlite3.Connection) -> int:
-    return conn.execute("SELECT COUNT(*) FROM clusters").fetchone()[0]
+def get_cluster_count(db: Database) -> int:
+    return db["clusters"].count_documents({})
