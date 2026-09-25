@@ -1,80 +1,136 @@
 # News Pulse
 
-A take-home assessment project that aggregates news from multiple RSS feeds, extracts full article text, and clusters articles by topic using keyword overlap.
+News Pulse is a Python-based news aggregation and clustering project designed to pull stories from multiple RSS feeds, extract article text, and group related items by topic. The project is structured as a small end-to-end pipeline: scrape, extract, store, and cluster news content for later use in a backend or UI layer.
+
+The repository is organized into three main areas:
+
+- `scraper/` — the live ingestion and clustering pipeline
+- `backend/` — server-side application code and API-layer work
+- `frontend/` — client-side interface work for visualizing the collected stories
 
 ---
 
-## Part 1 — Scraper
+## What the project does
 
-### How the Scraper Works
+News Pulse continuously gathers articles from several public news sources, normalizes them into a common schema, and attempts to identify thematically related stories.
 
-The scraper is started with the repository-level `run.py` entrypoint. It coordinates the following pipeline:
+The workflow is:
 
-1. **Initialize the database** — A SQLite connection is opened for `scraper/news_pulse.db`. The `articles` and `clusters` tables are created if they do not already exist.
-2. **Fetch RSS feeds** — `scraper/fetch.py` reads the BBC News, NPR, and Guardian World feeds with `feedparser`. Each entry is normalized into a common article record containing a title, summary, link, publication date, source, and a 16-character SHA-256 ID derived from the link. Missing links are ignored, feed HTML is stripped from summaries, and malformed feed dates fall back to the current UTC time.
-3. **Extract article text** — `scraper/extract.py` downloads each article page and uses Trafilatura to extract the main body text. If a page cannot be downloaded or parsed, the article is retained with an empty `full_text` value and a warning is logged.
-4. **Save and deduplicate articles** — `scraper/db.py` checks each article ID before inserting it. Articles with a link already stored in the database are skipped, while new articles are saved with their metadata and extracted full text.
-5. **Build topic clusters** — `scraper/cluster.py` combines each article's title and RSS summary, removes punctuation, stopwords, and common editorial words, and keeps words longer than two characters. Articles are assigned to the first existing cluster containing an article that shares at least four meaningful keywords; otherwise, a new cluster is created. Comparing against individual cluster members prevents an accumulated keyword union from pulling loosely related articles into an oversized cluster. The three most frequent keywords become the cluster label, and the earliest and latest publication dates define its time range.
-6. **Persist results and report totals** — Each run stores the generated clusters and prints counts for fetched articles, newly inserted articles, skipped duplicates, created clusters, and totals currently in the database.
+1. Fetch RSS entries from multiple feeds
+2. Normalize article metadata such as title, summary, published date, source, and link
+3. Download each article page and extract the main text body
+4. Deduplicate entries before saving them
+5. Group related articles into topic clusters based on keyword overlap
+6. Store the results in MongoDB for later access by the backend or frontend
 
-The scraper continues when an individual feed or article page fails, logging the problem and processing the remaining items. Article deduplication is persistent because it is based on the link hash in SQLite. Cluster records are currently inserted for every run, so rerunning the scraper prevents duplicate articles but can add another set of cluster rows.
+---
 
-### RSS Feeds Used
+## Current architecture
 
-Three public RSS feeds are ingested:
+### Scraper
 
-| Source             | Feed URL                                |
-| ------------------ | --------------------------------------- |
-| BBC News           | `http://feeds.bbci.co.uk/news/rss.xml`  |
-| NPR                | `https://feeds.npr.org/1001/rss.xml`    |
-| The Guardian World | `https://www.theguardian.com/world/rss` |
+The scraper is the working core of the project. It uses:
 
-### Clustering Approach
+- `feedparser` to read RSS feeds
+- `trafilatura` to extract article text from webpages
+- `pymongo` to store data in MongoDB
+- `python-dotenv` to load configuration from environment variables
 
-**Keyword-overlap grouping** was chosen over TF-IDF for several reasons:
+It processes feeds from sources such as:
 
-- **Simplicity**: No external NLP libraries are needed — just `re` and the standard library.
-- **Transparency**: Clusters are easy to interpret since they're built from plain shared words.
-- **Adequacy for the scope**: With ~30–50 articles per run, a lightweight approach is sufficient to surface groupings without the complexity of vectorization or similarity matrices.
+- BBC News
+- NPR
+- The Guardian World
 
-The algorithm works by extracting meaningful keywords from each article's title + summary (lowercased, punctuation stripped, stopwords removed), then grouping articles that share at least **4** common keywords with an existing cluster member. Generic reporting words such as `says`, `news`, and `year` are excluded because they do not identify a topic. The cluster label is based on the most frequent keywords across its members.
+Each article gets a stable ID based on the article URL so duplicate entries can be skipped across runs.
 
-### Overlap Threshold Tuning
+### MongoDB storage
 
-The default threshold is **4 shared keywords**. This favors precision, so a cluster represents articles with strong keyword overlap:
+The project is configured to use MongoDB instead of a local SQLite file. The database layer expects the following environment settings in `scraper/.env`:
 
-- **Threshold 1–2**: Produced large, noisy clusters because a small amount of shared vocabulary was enough to merge articles.
-- **Threshold 3**: Offered a moderate balance but still grouped some broadly related stories.
-- **Threshold 4**: Requires stronger topical similarity and keeps unrelated stories separate.
+```env
+MONGODB_URI=mongodb+srv://<username>:<password>@<cluster>.mongodb.net/
+DB_NAME=news_pulse
+```
 
-### Limitations
+The `articles` and `clusters` collections are created with indexes to support fast deduplication and retrieval.
 
-The clustering is **greedy and order-dependent**: articles are assigned to the first cluster that meets the overlap threshold, so the final groupings depend on the order articles are processed. This means two articles that should be in the same cluster could end up separate if they're processed in different batches or if no intermediate article bridges them. Additionally, the approach has no semantic understanding — "car" and "automobile" are treated as completely different words, and synonyms or paraphrases won't be matched.
+### Clustering logic
 
-### How to Run
+The clustering step uses keyword-overlap logic rather than ML models. It does the following:
+
+- Lowercases and cleans article text
+- Removes stopwords and common editorial noise
+- Keeps meaningful keywords longer than two characters
+- Compares article keywords against existing cluster members
+- Creates a new cluster when the overlap is too weak
+- Uses the most common keywords as the cluster label
+
+This keeps the implementation lightweight, explainable, and easy to debug.
+
+---
+
+## Repository structure
+
+```text
+news pulse/
+├── README.MD
+├── run.py
+├── scraper/
+│   ├── __init__.py
+│   ├── .env
+│   ├── .env.example
+│   ├── cluster.py
+│   ├── db.py
+│   ├── extract.py
+│   ├── fetch.py
+│   ├── requirements.txt
+│   └── run.py
+├── backend/
+│   └── src/
+├── frontend/
+│   └── src/
+├── plans/
+├── part1.plan.md
+└── .gitignore
+```
+
+---
+
+## Setup
+
+1. Create a virtual environment if needed.
+2. Install scraper dependencies:
 
 ```bash
-python run.py
+pip install -r scraper/requirements.txt
 ```
 
-**No environment variables required.** The script will:
+3. Create `scraper/.env` with your MongoDB connection string and database name.
+4. Run the scraper:
 
-1. Fetch articles from the three RSS feeds
-2. Extract full article text using trafilatura
-3. Cluster articles by keyword overlap
-4. Store everything in `scraper/news_pulse.db`
-5. Print a summary to the console
-
-**Expected output:**
-
-```
---- Summary ---
-Articles fetched:      45
-New articles inserted: 45
-Duplicates skipped:    0
-Clusters created:      12
-Total articles in DB:  45
-Total clusters in DB:  12
+```bash
+python -m scraper.run
 ```
 
-On subsequent runs, duplicate articles (by URL hash) are automatically skipped, so the script is safely re-runnable.
+---
+
+## Example output
+
+```text
+Starting News Pulse scraper
+Fetched 88 total articles
+Inserted 87 new articles (out of 88 fetched)
+Clusters created: 82
+Scraper run complete!
+Total articles in DB: 87
+Total clusters in DB: 82
+```
+
+---
+
+## Notes
+
+This project is a take-home assessment and prototype. The scraper is the most complete portion of the repository, while the backend and frontend are intended to build on the data produced by the ingestion and clustering pipeline.
+
+The project is designed to be extendable: once articles and clusters are in MongoDB, the backend can expose them through APIs and the frontend can render them in a dashboard or news feed UI.
