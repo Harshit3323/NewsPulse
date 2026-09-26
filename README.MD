@@ -129,7 +129,10 @@ MONGODB_URI=mongodb+srv://<username>:<password>@<cluster>.mongodb.net/
 DB_NAME=news_pulse
 ```
 
-The backend also accepts `PORT` and `PYTHON_EXECUTABLE`. Never commit `.env` files.
+Configure the backend's GitHub Actions settings (`GITHUB_TOKEN`, `GITHUB_OWNER`,
+`GITHUB_REPO`, `GITHUB_BRANCH`, and `GITHUB_WORKFLOW_FILE`) in `backend/.env` to
+trigger the scraper workflow. The API port is configurable with `PORT`. Never
+commit `.env` files.
 
 ### 2. Install scraper dependencies
 
